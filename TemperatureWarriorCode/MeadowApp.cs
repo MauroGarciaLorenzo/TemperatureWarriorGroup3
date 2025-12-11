@@ -29,7 +29,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(0.1);
+        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(1);
         Temperature currentTemperature;
 
         
@@ -41,6 +41,9 @@ namespace TemperatureWarriorCode
         
         double currentSetpoint;
         TemperatureRange currentRange;
+
+        IDigitalOutputPort coolingRelayPort;
+        IDigitalOutputPort heatingRelayPort;
 
         // Cancelación de ronda en curso
         CancellationTokenSource shutdownCancellationSource = new();
@@ -89,6 +92,9 @@ namespace TemperatureWarriorCode
             return;
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
         private void SensorSetup()
         {
             // TODO Inicializar sensores de actuadores
@@ -98,8 +104,18 @@ namespace TemperatureWarriorCode
                                         sampleTimeInMilliseconds: sensorSampleTime.Milliseconds);
 
             // Configuración de Sensor de Temperatura
-            sensor = new AnalogTemperature(analogPin: Device.Pins.A02, sensorType: AnalogTemperature.KnownSensorType.TMP36);
-            
+            sensor = new AnalogTemperature(analogPin: Device.Pins.A02, sensorType: AnalogTemperature.KnownSensorType.LM35);
+
+            // Configuración de pines de relés
+            coolingRelayPort = Device.CreateDigitalOutputPort(
+                Device.Pins.D13, 
+                initialState: false
+            );
+            heatingRelayPort = Device.CreateDigitalOutputPort(
+                Device.Pins.D11, 
+                initialState: false
+            );
+
             sensor.Updated += TemperatureUpdateHandler;
             sensor.StartUpdating(sensorSampleTime);
         }
@@ -161,7 +177,7 @@ namespace TemperatureWarriorCode
         private void TemperatureUpdateHandler(object sender, IChangeResult<Temperature> e)
         {
             currentTemperature = e.New;
-            //Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature}");
+            Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
 
             if (currentTemperature.Celsius < 0) {
                 Random rnd = new Random();
@@ -177,9 +193,31 @@ namespace TemperatureWarriorCode
                 return;
             temperatureHandlerRunning = true; 
 
-            var currTemp = currentTemperature; 
+            var currTemp = currentTemperature;
 
             // TODO Gestionar controlador de temperatura si estamos en modo combate
+            // Solo controlar en modo combate y si no es test
+            // if (currentMode == OpMode.Combat && currentCommand is { isTest: false })
+            // {
+            int action = temperatureController.Update(currTemp.Celsius);
+            if (action == 1)
+            {
+                heat();
+            } else if (action == 2)
+            {
+                cool();
+            } else
+            {
+                shutdown();
+            }
+
+            // Protección por temperatura demasiado alta
+            if (currTemp.Celsius > 220)
+            {
+                Resolver.Log.Info($"[MeadowApp] ALERTA: Temperatura crítica: {currTemp.Celsius}ºC");
+                TemperatureTooHighHandler();
+            }
+            // }
 
             temperatureHandlerRunning = false;
         }
@@ -310,8 +348,10 @@ namespace TemperatureWarriorCode
             double getRangeSetpoint(TemperatureRange range) => range.MinTemp + (range.MaxTemp - range.MinTemp) * 0.5;
 
             if (!cmd.isTest)
-            { 
-                temperatureController.SetSetpoint(getRangeSetpoint(cmd.temperatureRanges.First()));
+            {
+                TemperatureRange tempRange = cmd.temperatureRanges.First();
+                temperatureController.SetSetpoint(getRangeSetpoint(tempRange));
+                temperatureController.setBounds(lowerBound: tempRange.MinTemp, upperBound: tempRange.MaxTemp);
                 temperatureController.Start();
             }
 
@@ -408,6 +448,24 @@ namespace TemperatureWarriorCode
 
             Resolver.Log.Info("[MeadowApp] ### Fin: StartRound() ###");
             return;
+        }
+
+        public void cool()
+        {
+            coolingRelayPort.State = true;
+            heatingRelayPort.State = false;
+        }
+
+        public void heat()
+        {
+            heatingRelayPort.State = true;
+            coolingRelayPort.State = false;
+        }
+
+        public void shutdown()
+        {
+            heatingRelayPort.State = false;
+            coolingRelayPort.State = false;
         }
     }
 
