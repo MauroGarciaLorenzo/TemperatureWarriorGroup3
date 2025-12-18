@@ -2,9 +2,9 @@
     internal class Secrets {
 
         //WiFi NAME 
-        public const string WIFI_NAME = "iPhone 15 de Marina";
+        public const string WIFI_NAME = "Galaxy S23 0637";
 
         //PASSWORD FOR THE WiFi NAME
-        public const string WIFI_PASSWORD = "3jks6o52y4nnk";
+        public const string WIFI_PASSWORD = "zs9avaszmdj4y5j";
     }
 }

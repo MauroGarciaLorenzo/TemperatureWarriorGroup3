@@ -29,7 +29,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(1);
+        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(0.5);
         Temperature currentTemperature;
 
         
@@ -108,12 +108,12 @@ namespace TemperatureWarriorCode
 
             // Configuración de pines de relés
             coolingRelayPort = Device.CreateDigitalOutputPort(
-                Device.Pins.D13, 
-                initialState: false
+                Device.Pins.D10, 
+                initialState: true
             );
             heatingRelayPort = Device.CreateDigitalOutputPort(
                 Device.Pins.D11, 
-                initialState: false
+                initialState: true
             );
 
             sensor.Updated += TemperatureUpdateHandler;
@@ -464,8 +464,8 @@ namespace TemperatureWarriorCode
 
         public void shutdown()
         {
-            heatingRelayPort.State = false;
-            coolingRelayPort.State = false;
+            heatingRelayPort.State = true;
+            coolingRelayPort.State = true;
         }
     }
 
