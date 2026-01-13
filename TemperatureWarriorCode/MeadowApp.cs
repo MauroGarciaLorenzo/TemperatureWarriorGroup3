@@ -20,6 +20,7 @@ using NETDuinoWar;
 
 // RingBuffer.NET
 using RingBuffer;
+using System.Collections.Generic;
 
 namespace TemperatureWarriorCode
 {
@@ -29,9 +30,12 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(0.5);
+        TimeSpan updateHtmlTime = TimeSpan.FromSeconds(1);
+        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(0.1);
         Temperature currentTemperature;
-
+        List<double> temperatureHistory = new List<double>();
+        List<double> timeHistory = new List<double>();
+        int numberOfPoints = 0;
         
 
         TemperatureController temperatureController;
@@ -117,7 +121,7 @@ namespace TemperatureWarriorCode
             );
 
             sensor.Updated += TemperatureUpdateHandler;
-            sensor.StartUpdating(sensorSampleTime);
+            sensor.StartUpdating(updateHtmlTime);
         }
 
         private async Task LaunchNetworkAndWebserver()
@@ -177,6 +181,9 @@ namespace TemperatureWarriorCode
         private void TemperatureUpdateHandler(object sender, IChangeResult<Temperature> e)
         {
             currentTemperature = e.New;
+            temperatureHistory.Add(currentTemperature.Celsius);
+            numberOfPoints += 1;
+            timeHistory.Add(numberOfPoints * (double) sensorSampleTime.TotalSeconds);
             Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
 
             if (currentTemperature.Celsius < 0) {
@@ -199,7 +206,7 @@ namespace TemperatureWarriorCode
             // Solo controlar en modo combate y si no es test
             // if (currentMode == OpMode.Combat && currentCommand is { isTest: false })
             // {
-            int action = temperatureController.Update(currTemp.Celsius);
+            int action = temperatureController.Update(currTemp.Celsius, temperatureHistory, timeHistory);
             if (action == 1)
             {
                 heat();

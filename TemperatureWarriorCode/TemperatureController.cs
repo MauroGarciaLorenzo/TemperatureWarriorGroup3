@@ -6,6 +6,10 @@ using Meadow.Devices;
 using Meadow.Hardware;
 using Meadow.Units;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using MathNet.Numerics.Integration;
+using MathNet.Numerics.Interpolation;
 
 namespace TemperatureWarriorCode
 {
@@ -23,11 +27,12 @@ namespace TemperatureWarriorCode
         double setpoint;
 
         // Estado PID sencillo
-        double kp = 30.0;
-        double ki = 5.0;
-        double kd = 2.0;
+        double kp = 0.6;
+        double ki = 0.2;
+        double kd = 0.125;
 
         double integral = 0.0;
+        double derivative = 0.0;
         double lastError = 0.0;
 
         public TemperatureController(double outputUpperbound, 
@@ -56,6 +61,7 @@ namespace TemperatureWarriorCode
         public void Start()
         {
             integral = 0.0;
+            derivative = 0.0;
             lastError = 0.0;
             SetWorkingMode(true);
         }
@@ -71,33 +77,40 @@ namespace TemperatureWarriorCode
         }
 
         // Llamada desde MeadowApp con la temperatura actual
-        public int Update(double currentTemperatureCelsius)
+        public int Update(double currentTemperatureCelsius, List<double> temperatureHistory, List<double> timeHistory)
         {
             int action = 0; // 0: no hacer nada, 1: calentar, 2: enfriar
             if (!isWorking) return 0;
 
+            double currentTime = timeHistory[timeHistory.Count - 1];
+
+            var interp = LinearSpline.Interpolate(timeHistory, temperatureHistory);
+            integral = interp.Integrate(currentTime);
+            derivative = interp.Differentiate(currentTime);
+
             // PID discreto muy simple
             double error = setpoint - currentTemperatureCelsius;
-            double dt = sampleTimeInMilliseconds / 1000.0;
 
             double p = kp * error;
-            integral += error * dt;
             double i = ki * integral;
-            double d = kd * (error - lastError) / dt;
+            double d = kd * derivative;
 
             double output = p + i + d;
-
-            lastError = error;
-
-            // Lógica de relés: positivo = calentar, negativo = enfriar
-            if (currentTemperatureCelsius < setpoint - (upperBound-lowerBound) / 4)
+            if (output > outputUpperbound)
             {
                 action = 1;
             }
-            if (currentTemperatureCelsius > setpoint + (upperBound - lowerBound) / 4)
+            else if (output < outputLowerbound)
             {
                 action = 2;
+            } else
+            {
+                action = 0;
             }
+
+                lastError = error;
+
+            // Lógica de relés: positivo = calentar, negativo = enfriar
             return action;
         }
     }

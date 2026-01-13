@@ -8,6 +8,7 @@
     <AssemblyName>App</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="Meadow.F7" Version="2.0.1.2" />
     <PackageReference Include="Meadow.Foundation" Version="2.0.1.2" />
     <PackageReference Include="Meadow.Foundation.Displays.TftSpi" Version="2.0.1.2" />
