@@ -1,5 +1,4 @@
-﻿using Meadow.Gateways.Bluetooth;
-// Meadow
+﻿// Meadow
 using Meadow;
 using Meadow.Foundation.Sensors.Temperature;
 using Meadow.Devices;
@@ -8,8 +7,6 @@ using Meadow.Units;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using MathNet.Numerics.Integration;
-using MathNet.Numerics.Interpolation;
 
 namespace TemperatureWarriorCode
 {
@@ -32,8 +29,8 @@ namespace TemperatureWarriorCode
         double kd = 0.125;
 
         double integral = 0.0;
-        double derivative = 0.0;
         double lastError = 0.0;
+        double lastTimeSeconds = 0.0;
 
         public TemperatureController(double outputUpperbound, 
             double outputLowerbound, long sampleTimeInMilliseconds)
@@ -61,8 +58,8 @@ namespace TemperatureWarriorCode
         public void Start()
         {
             integral = 0.0;
-            derivative = 0.0;
             lastError = 0.0;
+            lastTimeSeconds = 0.0;
             SetWorkingMode(true);
         }
 
@@ -73,6 +70,12 @@ namespace TemperatureWarriorCode
 
         public void SetSetpoint(double setpoint)
         {
+            if (Math.Abs(this.setpoint - setpoint) > 0.01)
+            {
+                integral = 0.0;
+                lastError = 0.0;
+                lastTimeSeconds = 0.0;
+            }
             this.setpoint = setpoint;
         }
 
@@ -82,36 +85,68 @@ namespace TemperatureWarriorCode
             int action = 0; // 0: no hacer nada, 1: calentar, 2: enfriar
             if (!isWorking) return 0;
 
-            double currentTime = timeHistory[timeHistory.Count - 1];
-
-            var interp = LinearSpline.Interpolate(timeHistory, temperatureHistory);
-            integral = interp.Integrate(currentTime);
-            derivative = interp.Differentiate(currentTime);
+            double currentTime = timeHistory.Count > 0 ? timeHistory[timeHistory.Count - 1] : lastTimeSeconds;
+            double dt = sampleTimeInMilliseconds / 1000.0;
+            if (timeHistory.Count > 1)
+            {
+                double dtCandidate = timeHistory[timeHistory.Count - 1] - timeHistory[timeHistory.Count - 2];
+                if (dtCandidate > 0.0)
+                    dt = dtCandidate;
+            }
 
             // PID discreto muy simple
             double error = setpoint - currentTemperatureCelsius;
+
+            // Control rápido cuando está fuera del rango
+            if (currentTemperatureCelsius < lowerBound)
+            {
+                lastError = error;
+                lastTimeSeconds = currentTime;
+                return 1;
+            }
+            if (currentTemperatureCelsius > upperBound)
+            {
+                lastError = error;
+                lastTimeSeconds = currentTime;
+                return 2;
+            }
+
+            integral += error * dt;
+            double integralLimit = ki > 0.0 ? Math.Abs(outputUpperbound / ki) : 0.0;
+            if (integralLimit > 0.0)
+            {
+                integral = Clamp(integral, -integralLimit, integralLimit);
+            }
+
+            double derivative = (error - lastError) / dt;
 
             double p = kp * error;
             double i = ki * integral;
             double d = kd * derivative;
 
             double output = p + i + d;
-            if (output > outputUpperbound)
-            {
+            output = Clamp(output, outputLowerbound, outputUpperbound);
+
+            double deadband = Math.Max(0.25, (upperBound - lowerBound) * 0.05);
+            if (output > deadband)
                 action = 1;
-            }
-            else if (output < outputLowerbound)
-            {
+            else if (output < -deadband)
                 action = 2;
-            } else
-            {
+            else
                 action = 0;
-            }
 
                 lastError = error;
+            lastTimeSeconds = currentTime;
 
             // Lógica de relés: positivo = calentar, negativo = enfriar
             return action;
+        }
+
+        double Clamp(double value, double min, double max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
         }
     }
 }

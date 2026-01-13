@@ -104,7 +104,7 @@ namespace TemperatureWarriorCode
             // TODO Inicializar sensores de actuadores
 
             temperatureController =
-                new TemperatureController(outputUpperbound: 255.0, outputLowerbound: 0.0,
+                new TemperatureController(outputUpperbound: 255.0, outputLowerbound: -255.0,
                                         sampleTimeInMilliseconds: sensorSampleTime.Milliseconds);
 
             // Configuración de Sensor de Temperatura
@@ -384,6 +384,7 @@ namespace TemperatureWarriorCode
                 currentSetpoint = getRangeSetpoint(range);
                 currentRange = range;
                 temperatureController.SetSetpoint(currentSetpoint);
+                temperatureController.setBounds(lowerBound: range.MinTemp, upperBound: range.MaxTemp);
                 Resolver.Log.Info($"Iniciando rango [{range.MinTemp} - {range.MaxTemp}]");
                 try
                 {
