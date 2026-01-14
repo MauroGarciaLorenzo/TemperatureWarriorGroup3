@@ -69,7 +69,7 @@ namespace TemperatureWarriorCode
         // Buffer de actualizaciones a enviar en la próxima notifiación al cliente
         RingBuffer<double> nextNotificationsBuffer = new(10);
         readonly long notificationPeriodInMilliseconds = 800;
-        readonly int anticipationSeconds = 2;
+        readonly int curveRampSeconds = 4;
 
         // El modo de ejecución del sistema
         enum OpMode
@@ -308,6 +308,69 @@ namespace TemperatureWarriorCode
             return webServer.SendMessage(connection, $"{{ \"type\": \"N\", \"ns\": {SerializeNextNotifications()}}}");
         }
 
+        private double GetRangeSetpoint(TemperatureRange range) => range.MinTemp + (range.MaxTemp - range.MinTemp) * 0.5;
+
+        private void BuildTargetCurve(TemperatureRange[] ranges, int rampSeconds, out List<double> curveTimes, out List<double> curveTemps)
+        {
+            curveTimes = new List<double>();
+            curveTemps = new List<double>();
+            if (ranges == null || ranges.Length == 0)
+                return;
+
+            double rampSec = Math.Max(0, rampSeconds);
+            double elapsed = 0.0;
+
+            void AppendPoint(double time, double temp)
+            {
+                if (curveTimes.Count == 0)
+                {
+                    curveTimes.Add(time);
+                    curveTemps.Add(temp);
+                    return;
+                }
+
+                double lastTime = curveTimes[curveTimes.Count - 1];
+                if (time <= lastTime + 0.000001)
+                {
+                    curveTimes[curveTimes.Count - 1] = time;
+                    curveTemps[curveTemps.Count - 1] = temp;
+                    return;
+                }
+
+                curveTimes.Add(time);
+                curveTemps.Add(temp);
+            }
+
+            AppendPoint(0.0, GetRangeSetpoint(ranges[0]));
+
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                double rangeTimeSec = ranges[i].RangeTimeInMilliseconds / 1000.0;
+                double currentTarget = GetRangeSetpoint(ranges[i]);
+                bool hasNext = i + 1 < ranges.Length;
+
+                if (hasNext && rampSec > 0.0)
+                {
+                    double ramp = Math.Min(rampSec, rangeTimeSec);
+                    double hold = rangeTimeSec - ramp;
+                    if (hold > 0.0)
+                    {
+                        elapsed += hold;
+                        AppendPoint(elapsed, currentTarget);
+                    }
+
+                    double nextTarget = GetRangeSetpoint(ranges[i + 1]);
+                    elapsed += ramp;
+                    AppendPoint(elapsed, nextTarget);
+                }
+                else
+                {
+                    elapsed += rangeTimeSec;
+                    AppendPoint(elapsed, currentTarget);
+                }
+            }
+        }
+
         private void RegisterTimeControllerTemperature(TimeController timeController)
         {
             var currTemp = currentTemperature.Celsius;
@@ -353,12 +416,15 @@ namespace TemperatureWarriorCode
 
             var shutdownCancellationToken = shutdownCancellationSource.Token;
 
-            double getRangeSetpoint(TemperatureRange range) => range.MinTemp + (range.MaxTemp - range.MinTemp) * 0.5;
-
             if (!cmd.isTest)
             {
                 TemperatureRange tempRange = cmd.temperatureRanges.First();
-                temperatureController.SetSetpoint(getRangeSetpoint(tempRange));
+                BuildTargetCurve(cmd.temperatureRanges, curveRampSeconds, out var curveTimes, out var curveTemps);
+                if (curveTimes.Count > 0)
+                {
+                    temperatureController.SetTargetCurve(curveTimes, curveTemps);
+                    temperatureController.SetSetpoint(curveTemps[0]);
+                }
                 temperatureController.setBounds(lowerBound: tempRange.MinTemp, upperBound: tempRange.MaxTemp);
                 temperatureController.Start();
             }
@@ -380,43 +446,22 @@ namespace TemperatureWarriorCode
             //// Notificaciones al cliente
             Timer notificationTimer = new(async _ => await NotifyClient(webServer, connection), null, 0, notificationPeriodInMilliseconds);
 
-            int anticipationMs = Math.Max(0, anticipationSeconds * 1000);
             for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Count; rangeIndex++)
-            { // modificar setpoint en cada iteración
+            { // modificar límites en cada iteración
                 var range = cmd.temperatureRanges[rangeIndex];
-                currentSetpoint = getRangeSetpoint(range);
+                currentSetpoint = GetRangeSetpoint(range);
                 currentRange = range;
-                temperatureController.SetSetpoint(currentSetpoint);
                 temperatureController.setBounds(lowerBound: range.MinTemp, upperBound: range.MaxTemp);
                 Resolver.Log.Info($"Iniciando rango [{range.MinTemp} - {range.MaxTemp}]");
 
-                var hasNextRange = rangeIndex + 1 < cmd.temperatureRanges.Count;
-                var preDelayMs = range.RangeTimeInMilliseconds;
-                if (hasNextRange && anticipationMs > 0)
-                    preDelayMs = Math.Max(0, range.RangeTimeInMilliseconds - anticipationMs);
-
                 try
                 {
-                    await Task.Delay(preDelayMs, shutdownCancellationToken);
+                    await Task.Delay(range.RangeTimeInMilliseconds, shutdownCancellationToken);
                 }
                 catch (TaskCanceledException)
                 {
                     // En caso de cancelación por temperature alta, escapar de loop (notificación a cliente se maneja abajo)
                     break;
-                }
-
-                if (hasNextRange && anticipationMs > 0)
-                {
-                    var nextRange = cmd.temperatureRanges[rangeIndex + 1];
-                    temperatureController.SetSetpoint(getRangeSetpoint(nextRange));
-                    try
-                    {
-                        await Task.Delay(anticipationMs, shutdownCancellationToken);
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        break;
-                    }
                 }
             }
 
