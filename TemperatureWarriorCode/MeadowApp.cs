@@ -69,7 +69,7 @@ namespace TemperatureWarriorCode
         // Buffer de actualizaciones a enviar en la próxima notifiación al cliente
         RingBuffer<double> nextNotificationsBuffer = new(10);
         readonly long notificationPeriodInMilliseconds = 800;
-        readonly int curveRampSeconds = 4;
+        readonly int curveRampSeconds = 3;
 
         // El modo de ejecución del sistema
         enum OpMode

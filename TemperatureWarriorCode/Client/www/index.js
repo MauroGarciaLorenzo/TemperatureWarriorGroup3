@@ -1,6 +1,7 @@
 // @ts-nocheck
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('rate').addEventListener('input', ranges_input);
+    document.getElementById('preview-curve')?.addEventListener('click', preview_curve);
     add_range();
     init_graph();
 });
@@ -122,6 +123,79 @@ const ranges_input = () => {
         if (connected && !round_started)
             document.getElementById("send-round").disabled = false;
     }
+};
+
+const build_target_curve = (ranges, rampSeconds) => {
+    const times = [];
+    const temps = [];
+    if (!ranges || ranges.length === 0) return { times, temps };
+
+    const get_range_setpoint = range => range.tempMin + (range.tempMax - range.tempMin) * 0.5;
+    const ramp = Math.max(0, rampSeconds);
+    let elapsed = 0;
+
+    const append_point = (time, temp) => {
+        if (times.length === 0) {
+            times.push(time);
+            temps.push(temp);
+            return;
+        }
+
+        const lastTime = times[times.length - 1];
+        if (time <= lastTime + 0.000001) {
+            times[times.length - 1] = time;
+            temps[temps.length - 1] = temp;
+            return;
+        }
+
+        times.push(time);
+        temps.push(temp);
+    };
+
+    append_point(0, get_range_setpoint(ranges[0]));
+
+    for (let i = 0; i < ranges.length; i++) {
+        const rangeTimeSec = ranges[i].roundTime;
+        const currentTarget = get_range_setpoint(ranges[i]);
+        const hasNext = i + 1 < ranges.length;
+
+        if (hasNext && ramp > 0) {
+            const rampTime = Math.min(ramp, rangeTimeSec);
+            const hold = rangeTimeSec - rampTime;
+            if (hold > 0) {
+                elapsed += hold;
+                append_point(elapsed, currentTarget);
+            }
+
+            const nextTarget = get_range_setpoint(ranges[i + 1]);
+            elapsed += rampTime;
+            append_point(elapsed, nextTarget);
+        } else {
+            elapsed += rangeTimeSec;
+            append_point(elapsed, currentTarget);
+        }
+    }
+
+    return { times, temps };
+};
+
+const preview_curve = () => {
+    const ranges = get_ranges_values();
+    if (!ranges) return;
+
+    hide_range_errors();
+    global_ranges = ranges;
+
+    const rampInput = document.getElementById('curve-ramp');
+    const rampSeconds = Math.max(0, parseFloat(rampInput?.value) || 0);
+
+    const curve = build_target_curve(ranges, rampSeconds);
+    set_round_chart(ranges);
+
+    chart.data.datasets[0].data = curve.times.map((t, i) => ({ x: t, y: curve.temps[i] }));
+    chart.data.datasets[0].pointBorderColor.length = 0;
+    chart.data.datasets[0].pointBackgroundColor.length = 0;
+    chart.update();
 };
 
 const show_connect_error = message => {
