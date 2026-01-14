@@ -4,13 +4,19 @@ using Meadow.Foundation.Sensors.Temperature;
 using Meadow.Devices;
 using Meadow.Hardware;
 using Meadow.Units;
+// Meadow
+using Meadow;
+using Meadow.Foundation.Sensors.Temperature;
+using Meadow.Devices;
+using Meadow.Hardware;
+using Meadow.Units;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 
 namespace TemperatureWarriorCode
 {
-    
+
     class TemperatureController
     {
 
@@ -23,29 +29,30 @@ namespace TemperatureWarriorCode
         double lowerBound;
         double setpoint;
 
-        // Estado PID sencillo
-        double kp = 1;
-        double ki = 1;
-        double kd = 0.05;
+        // Estado PID para control ON/OFF con inercia
+        // Kp: Reacción, Ki: Corrección mínima, Kd: Freno fuerte
+        double kp = 25.0;
+        double ki = 0.1;
+        double kd = 60.0;
 
         double integral = 0.0;
         double lastError = 0.0;
         double lastTimeSeconds = 0.0;
 
-        public TemperatureController(double outputUpperbound, 
+        public TemperatureController(double outputUpperbound,
             double outputLowerbound, long sampleTimeInMilliseconds)
         {
-            
+
             this.outputUpperbound = outputUpperbound;
             this.outputLowerbound = outputLowerbound;
             this.sampleTimeInMilliseconds = sampleTimeInMilliseconds;
         }
 
-        
+
 
         void SetWorkingMode(bool workingMode)
         {
-            
+
             isWorking = workingMode;
         }
 
@@ -97,19 +104,10 @@ namespace TemperatureWarriorCode
             // PID discreto muy simple
             double error = setpoint - currentTemperatureCelsius;
 
-            // Control rápido cuando está fuera del rango
-            if (currentTemperatureCelsius < lowerBound)
-            {
-                lastError = error;
-                lastTimeSeconds = currentTime;
-                return 1;
-            }
-            if (currentTemperatureCelsius > upperBound)
-            {
-                lastError = error;
-                lastTimeSeconds = currentTime;
-                return 2;
-            }
+            // Bypasseamos el control Bang-Bang para que el PID controle la aproximación suavemente
+            /*
+            if (currentTemperatureCelsius < lowerBound) ...
+            */
 
             integral += error * dt;
             double integralLimit = ki > 0.0 ? Math.Abs(outputUpperbound / ki) : 0.0;
@@ -125,23 +123,20 @@ namespace TemperatureWarriorCode
             double d = kd * derivative;
 
             double output = p + i + d;
-            Resolver.Log.Info("Output: " + output);
-            Resolver.Log.Info("Temperature: " + currentTemperatureCelsius);
-            Resolver.Log.Info("Setpoint: " + setpoint);
-            Resolver.Log.Info("Time: " + currentTime);
-
             output = Clamp(output, outputLowerbound, outputUpperbound);
 
-            double deadband = Math.Max(0.25, (upperBound - lowerBound) * 0.05);
-            if (currentTemperatureCelsius < setpoint)
+            double deadband = 10.0;
+            if (output > deadband)
                 action = 1;
-            else if (currentTemperatureCelsius > setpoint)
+            else if (output < -deadband)
                 action = 2;
             else
                 action = 0;
+            // Permitimos negativos para control simétrico (calentar/enfriar)
+            output = Clamp(output, -outputUpperbound, outputUpperbound);
 
-                lastError = error;
-            lastTimeSeconds = currentTime;
+            // Deadband fijo para evitar rebotar alrededor del setpoint
+            deadband = 10.0;
 
             // Lógica de relés: positivo = calentar, negativo = enfriar
             return action;
