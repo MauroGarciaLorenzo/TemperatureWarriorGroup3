@@ -30,7 +30,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(50);
+        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(25);
         Temperature currentTemperature;
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
@@ -69,7 +69,7 @@ namespace TemperatureWarriorCode
         // Buffer de actualizaciones a enviar en la próxima notifiación al cliente
         RingBuffer<double> nextNotificationsBuffer = new(10);
         readonly long notificationPeriodInMilliseconds = 800;
-        readonly int anticipationSeconds = 2;
+        readonly int anticipationSeconds = 0;
 
         // El modo de ejecución del sistema
         enum OpMode
@@ -381,7 +381,7 @@ namespace TemperatureWarriorCode
             Timer notificationTimer = new(async _ => await NotifyClient(webServer, connection), null, 0, notificationPeriodInMilliseconds);
 
             int anticipationMs = Math.Max(0, anticipationSeconds * 1000);
-            for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Count; rangeIndex++)
+            for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Count(); rangeIndex++)
             { // modificar setpoint en cada iteración
                 var range = cmd.temperatureRanges[rangeIndex];
                 currentSetpoint = getRangeSetpoint(range);
@@ -390,7 +390,7 @@ namespace TemperatureWarriorCode
                 temperatureController.setBounds(lowerBound: range.MinTemp, upperBound: range.MaxTemp);
                 Resolver.Log.Info($"Iniciando rango [{range.MinTemp} - {range.MaxTemp}]");
 
-                var hasNextRange = rangeIndex + 1 < cmd.temperatureRanges.Count;
+                var hasNextRange = rangeIndex + 1 < cmd.temperatureRanges.Count();
                 var preDelayMs = range.RangeTimeInMilliseconds;
                 if (hasNextRange && anticipationMs > 0)
                     preDelayMs = Math.Max(0, range.RangeTimeInMilliseconds - anticipationMs);
