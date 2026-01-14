@@ -64,7 +64,7 @@ namespace TemperatureWarriorCode
     {
         first = true;
         lastAction = 0;
-        lastSwitchTime = 0.0;
+        lastSwitchTime = -minSwitchTime;
         SetWorkingMode(true);
     }
 
@@ -112,10 +112,19 @@ namespace TemperatureWarriorCode
 
         int desiredAction = 0;
 
-        if (predictedTemp < lowerBound - hysteresis)
+        // Prioriza temperatura real fuera de rango
+        if (currentTemperatureCelsius < lowerBound)
             desiredAction = 1; // calor
-        else if (predictedTemp > upperBound + hysteresis)
+        else if (currentTemperatureCelsius > upperBound)
             desiredAction = 2; // frío
+        else
+        {
+            // Dentro de rango: usar predicción para anticipar
+            if (predictedTemp < lowerBound - hysteresis)
+                desiredAction = 1; // calor
+            else if (predictedTemp > upperBound + hysteresis)
+                desiredAction = 2; // frío
+        }
 
         // Protección de relé / Peltier
         if (desiredAction != lastAction &&
