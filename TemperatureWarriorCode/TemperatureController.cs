@@ -46,6 +46,10 @@ namespace TemperatureWarriorCode
         double lastError = 0.0;
         double lastTimeSeconds = 0.0;
 
+        // Adelanto (segundos) aplicado a la curva objetivo para compensar retardo térmico.
+        // Un valor positivo desplaza la curva "a la izquierda" (apunta a un setpoint futuro).
+        double curveLeadSeconds = 0.0;
+
         List<double> targetTimeSeconds = new List<double>();
         List<double> targetTemp = new List<double>();
         bool hasTargetCurve = false;
@@ -104,6 +108,11 @@ namespace TemperatureWarriorCode
             targetTimeSeconds = new List<double>(timeSeconds);
             targetTemp = new List<double>(temps);
             hasTargetCurve = true;
+        }
+
+        public void SetCurveLeadSeconds(double leadSeconds)
+        {
+            curveLeadSeconds = leadSeconds;
         }
 
         public void ClearTargetCurve()
@@ -201,7 +210,7 @@ namespace TemperatureWarriorCode
             if (double.IsNaN(curveStartTimeSeconds))
                 curveStartTimeSeconds = currentTime;
 
-            double t = currentTime - curveStartTimeSeconds;
+            double t = (currentTime - curveStartTimeSeconds) + curveLeadSeconds;
             if (t <= targetTimeSeconds[0])
                 return targetTemp[0];
 

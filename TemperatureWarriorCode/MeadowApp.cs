@@ -40,9 +40,13 @@ namespace TemperatureWarriorCode
         bool temperatureHandlerRunning = false; // Evitar overlapping de handlers
 
         // Control por time-proportioning (para relés ON/OFF) usando la salida continua del PID.
-        readonly int controlWindowInMilliseconds = 3000;
+        readonly int controlWindowInMilliseconds = 1000;
         long controlWindowStartMs = 0;
         TemperatureController.ActuatorAction lastActuatorAction = TemperatureController.ActuatorAction.Off;
+
+        // Adelanto para compensar el retardo térmico (curva objetivo desplazada a la derecha).
+        // Un valor positivo desplaza la curva "a la izquierda".
+        readonly double targetCurveLeadSeconds = 3.0;
 
         // Estado del actuador en un rango de temperatura
         
@@ -478,6 +482,7 @@ namespace TemperatureWarriorCode
                     temperatureController.SetTargetCurve(curveTimes, curveTemps);
                     temperatureController.SetSetpoint(curveTemps[0]);
                 }
+                temperatureController.SetCurveLeadSeconds(targetCurveLeadSeconds);
                 temperatureController.setBounds(lowerBound: tempRange.MinTemp, upperBound: tempRange.MaxTemp);
                 temperatureController.Start();
             }
