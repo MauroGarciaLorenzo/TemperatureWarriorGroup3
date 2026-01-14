@@ -30,7 +30,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(25);
+        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(1);
         Temperature currentTemperature;
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
@@ -66,7 +66,7 @@ namespace TemperatureWarriorCode
         // El comando a ejecutar
         Command? currentCommand;
 
-        // Buffer de actualizaciones a enviar en la próxima notifiación al cliente
+        // Buffer de actualizaciones a enviar en la próxima notificación al cliente
         RingBuffer<double> nextNotificationsBuffer = new(10);
         readonly long notificationPeriodInMilliseconds = 800;
         readonly int anticipationSeconds = 0;

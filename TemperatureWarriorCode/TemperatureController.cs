@@ -24,8 +24,8 @@ namespace TemperatureWarriorCode
         double setpoint;
 
         // Estado PID sencillo
-        double kp = 2;
-        double ki = 0.2;
+        double kp = 1;
+        double ki = 1;
         double kd = 0.05;
 
         double integral = 0.0;
@@ -128,13 +128,14 @@ namespace TemperatureWarriorCode
             Resolver.Log.Info("Output: " + output);
             Resolver.Log.Info("Temperature: " + currentTemperatureCelsius);
             Resolver.Log.Info("Setpoint: " + setpoint);
+            Resolver.Log.Info("Time: " + currentTime);
 
             output = Clamp(output, outputLowerbound, outputUpperbound);
 
             double deadband = Math.Max(0.25, (upperBound - lowerBound) * 0.05);
-            if (output > deadband)
+            if (currentTemperatureCelsius < setpoint)
                 action = 1;
-            else if (output < -deadband)
+            else if (currentTemperatureCelsius > setpoint)
                 action = 2;
             else
                 action = 0;
