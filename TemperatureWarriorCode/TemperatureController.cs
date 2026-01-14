@@ -1,4 +1,20 @@
-﻿class TemperatureController
+﻿using Meadow.Gateways.Bluetooth;
+// Meadow
+using Meadow;
+using Meadow.Foundation.Sensors.Temperature;
+using Meadow.Devices;
+using Meadow.Hardware;
+using Meadow.Units;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using MathNet.Numerics.Integration;
+using MathNet.Numerics.Interpolation;
+
+namespace TemperatureWarriorCode
+{
+    
+    class TemperatureController
 {
     bool isWorking = false;
 
@@ -119,4 +135,5 @@
 
         return lastAction;
     }
+}
 }
