@@ -34,11 +34,15 @@ namespace TemperatureWarriorCode
         Temperature currentTemperature;
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
-        int numberOfPoints = 0;
         
 
         TemperatureController temperatureController;
         bool temperatureHandlerRunning = false; // Evitar overlapping de handlers
+
+        // Control por time-proportioning (para relés ON/OFF) usando la salida continua del PID.
+        readonly int controlWindowInMilliseconds = 3000;
+        long controlWindowStartMs = 0;
+        TemperatureController.ActuatorAction lastActuatorAction = TemperatureController.ActuatorAction.Off;
 
         // Estado del actuador en un rango de temperatura
         
@@ -105,7 +109,7 @@ namespace TemperatureWarriorCode
 
             temperatureController =
                 new TemperatureController(outputUpperbound: 255.0, outputLowerbound: -255.0,
-                                        sampleTimeInMilliseconds: sensorSampleTime.Milliseconds);
+                                        sampleTimeInMilliseconds: (long)sensorSampleTime.TotalMilliseconds);
 
             // Configuración de Sensor de Temperatura
             sensor = new AnalogTemperature(analogPin: Device.Pins.A02, sensorType: AnalogTemperature.KnownSensorType.LM35);
@@ -182,17 +186,68 @@ namespace TemperatureWarriorCode
         private void TemperatureUpdateHandler(object sender, IChangeResult<Temperature> e)
         {
             currentTemperature = e.New;
-            temperatureHistory.Add(currentTemperature.Celsius);
-            numberOfPoints += 1;
-            timeHistory.Add(numberOfPoints * (double) sensorSampleTime.TotalSeconds);
             Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
 
             if (currentTemperature.Celsius < 0) {
                 Random rnd = new Random();
                 currentTemperature = new Temperature(rnd.Next(minValue: 20, maxValue: 21));
             }
+
+            temperatureHistory.Add(currentTemperature.Celsius);
+            timeHistory.Add(TimeUtils.millis() / 1000.0);
             
             TemperatureControllerHandler();
+        }
+
+        private void ApplyControlSignal(TemperatureController.ControlSignal signal)
+        {
+            long nowMs = TimeUtils.millis();
+
+            if (controlWindowStartMs == 0)
+                controlWindowStartMs = nowMs;
+
+            if (signal.Action != lastActuatorAction)
+            {
+                lastActuatorAction = signal.Action;
+                controlWindowStartMs = nowMs;
+            }
+
+            long elapsedMs = nowMs - controlWindowStartMs;
+            if (elapsedMs >= controlWindowInMilliseconds)
+            {
+                long windows = elapsedMs / controlWindowInMilliseconds;
+                controlWindowStartMs += windows * controlWindowInMilliseconds;
+                elapsedMs = nowMs - controlWindowStartMs;
+            }
+
+            if (signal.Action == TemperatureController.ActuatorAction.Off || signal.Duty <= 0.0)
+            {
+                shutdown();
+                return;
+            }
+
+            if (signal.Duty >= 1.0)
+            {
+                if (signal.Action == TemperatureController.ActuatorAction.Heat)
+                    heat();
+                else
+                    cool();
+                return;
+            }
+
+            double onTimeMs = signal.Duty * controlWindowInMilliseconds;
+            bool shouldBeOn = elapsedMs < onTimeMs;
+
+            if (!shouldBeOn)
+            {
+                shutdown();
+                return;
+            }
+
+            if (signal.Action == TemperatureController.ActuatorAction.Heat)
+                heat();
+            else
+                cool();
         }
 
         private void TemperatureControllerHandler()
@@ -207,17 +262,8 @@ namespace TemperatureWarriorCode
             // Solo controlar en modo combate y si no es test
             // if (currentMode == OpMode.Combat && currentCommand is { isTest: false })
             // {
-            int action = temperatureController.Update(currTemp.Celsius, temperatureHistory, timeHistory);
-            if (action == 1)
-            {
-                heat();
-            } else if (action == 2)
-            {
-                cool();
-            } else
-            {
-                shutdown();
-            }
+            var signal = temperatureController.UpdateSignal(currTemp.Celsius, temperatureHistory, timeHistory);
+            ApplyControlSignal(signal);
 
             // Protección por temperatura demasiado alta
             if (currTemp.Celsius > 220)

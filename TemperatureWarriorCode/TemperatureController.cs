@@ -5,6 +5,31 @@ namespace TemperatureWarriorCode
 {
     class TemperatureController
     {
+        public enum ActuatorAction
+        {
+            Off = 0,
+            Heat = 1,
+            Cool = 2,
+        }
+
+        public readonly struct ControlSignal
+        {
+            public ControlSignal(ActuatorAction action, double duty, double output, double setpoint, double error)
+            {
+                Action = action;
+                Duty = duty;
+                Output = output;
+                Setpoint = setpoint;
+                Error = error;
+            }
+
+            public ActuatorAction Action { get; }
+            public double Duty { get; }
+            public double Output { get; }
+            public double Setpoint { get; }
+            public double Error { get; }
+        }
+
         bool isWorking = false;
         double outputUpperbound;
         double outputLowerbound;
@@ -90,8 +115,24 @@ namespace TemperatureWarriorCode
 
         public int Update(double currentTemperatureCelsius, List<double> temperatureHistory, List<double> timeHistory)
         {
-            int action = 0;
-            if (!isWorking) return 0;
+            var signal = UpdateSignal(currentTemperatureCelsius, temperatureHistory, timeHistory);
+            return signal.Action switch
+            {
+                ActuatorAction.Heat => 1,
+                ActuatorAction.Cool => 2,
+                _ => 0,
+            };
+        }
+
+        public ControlSignal UpdateSignal(double currentTemperatureCelsius, List<double> temperatureHistory, List<double> timeHistory)
+        {
+            if (!isWorking)
+            {
+                double currentTimeOff = timeHistory.Count > 0 ? timeHistory[timeHistory.Count - 1] : lastTimeSeconds;
+                double targetSetpointOff = GetTargetSetpoint(currentTimeOff);
+                double errorOff = targetSetpointOff - currentTemperatureCelsius;
+                return new ControlSignal(ActuatorAction.Off, duty: 0.0, output: 0.0, setpoint: targetSetpointOff, error: errorOff);
+            }
 
             double currentTime = timeHistory.Count > 0 ? timeHistory[timeHistory.Count - 1] : lastTimeSeconds;
             double dt = sampleTimeInMilliseconds / 1000.0;
@@ -101,26 +142,27 @@ namespace TemperatureWarriorCode
                 if (dtCandidate > 0.0)
                     dt = dtCandidate;
             }
+            if (dt <= 0.0)
+                dt = Math.Max(0.001, sampleTimeInMilliseconds / 1000.0);
 
             double targetSetpoint = GetTargetSetpoint(currentTime);
 
-            if (!hasTargetCurve)
+            // Si está fuera del rango permitido, forzar actuación al 100% para volver rápido al rango.
+            if (currentTemperatureCelsius < lowerBound)
             {
-                if (currentTemperatureCelsius < lowerBound)
-                {
-                    lastError = targetSetpoint - currentTemperatureCelsius;
-                    lastTimeSeconds = currentTime;
-                    return 1;
-                }
-                if (currentTemperatureCelsius > upperBound)
-                {
-                    lastError = targetSetpoint - currentTemperatureCelsius;
-                    lastTimeSeconds = currentTime;
-                    return 2;
-                }
+                lastError = targetSetpoint - currentTemperatureCelsius;
+                lastTimeSeconds = currentTime;
+                return new ControlSignal(ActuatorAction.Heat, duty: 1.0, output: outputUpperbound, setpoint: targetSetpoint, error: lastError);
+            }
+            if (currentTemperatureCelsius > upperBound)
+            {
+                lastError = targetSetpoint - currentTemperatureCelsius;
+                lastTimeSeconds = currentTime;
+                return new ControlSignal(ActuatorAction.Cool, duty: 1.0, output: outputLowerbound, setpoint: targetSetpoint, error: lastError);
             }
 
             double error = targetSetpoint - currentTemperatureCelsius;
+
             integral += error * dt;
             double integralLimit = ki > 0.0 ? Math.Abs(outputUpperbound / ki) : 0.0;
             if (integralLimit > 0.0)
@@ -131,15 +173,24 @@ namespace TemperatureWarriorCode
             output = Clamp(output, outputLowerbound, outputUpperbound);
 
             double deadband = Math.Max(0.25, (upperBound - lowerBound) * 0.05);
-            if (output > deadband)
-                action = 1;
-            else if (output < -deadband)
-                action = 2;
+            ActuatorAction action;
+            double duty;
+            if (Math.Abs(output) <= deadband)
+            {
+                action = ActuatorAction.Off;
+                duty = 0.0;
+            }
+            else
+            {
+                action = output > 0 ? ActuatorAction.Heat : ActuatorAction.Cool;
+                double denom = Math.Abs(outputUpperbound) > 0.000001 ? Math.Abs(outputUpperbound) : 1.0;
+                duty = Clamp(Math.Abs(output) / denom, 0.0, 1.0);
+            }
 
             lastError = error;
             lastTimeSeconds = currentTime;
 
-            return action;
+            return new ControlSignal(action, duty, output, targetSetpoint, error);
         }
 
         double GetTargetSetpoint(double currentTime)

@@ -1,6 +1,12 @@
 // @ts-nocheck
 
 let chart;
+const target_curve_id = 'target-curve';
+
+const get_curve_dataset_index = () => {
+    if (!chart) return -1;
+    return chart.data.datasets.findIndex(ds => ds.id === target_curve_id);
+};
 
 const init_graph = () => {
     const ctx = document.getElementById('chart')?.getContext('2d');
@@ -75,8 +81,18 @@ const set_round_chart = ranges => {
 };
 
 const set_test_chart = () => {
-    clear_graph();
-    chart.options.scales.x.max = 60;
+    chart.data.datasets[0].data.length = 0;
+    chart.data.datasets[0].pointBorderColor.length = 0;
+    chart.data.datasets[0].pointBackgroundColor.length = 0;
+
+    const curveIndex = get_curve_dataset_index();
+    if (curveIndex >= 0 && chart.data.datasets[curveIndex].data.length > 0) {
+        const last = chart.data.datasets[curveIndex].data[chart.data.datasets[curveIndex].data.length - 1];
+        const curveMax = typeof last === 'object' ? last.x : 0;
+        chart.options.scales.x.max = Math.max(60, curveMax || 0);
+    } else {
+        chart.options.scales.x.max = 60;
+    }
 
     chart.update();
 };
@@ -105,3 +121,24 @@ const clear_graph = () => {
     chart.data.datasets.length = 1; // remove all other datasets
     chart.data.datasets[0].data.length = 0; // remove temperature points
 }
+
+const set_target_curve = points => {
+    const curveDataset = {
+        id: target_curve_id,
+        label: 'Curva objetivo',
+        data: points,
+        borderWidth: 2,
+        borderColor: '#444444',
+        pointRadius: 0,
+        pointHitRadius: 0,
+        fill: false,
+        borderDash: [6, 4],
+    };
+
+    const index = get_curve_dataset_index();
+    if (index === -1) {
+        chart.data.datasets.push(curveDataset);
+    } else {
+        chart.data.datasets[index] = curveDataset;
+    }
+};

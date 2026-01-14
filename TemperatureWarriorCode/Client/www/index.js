@@ -192,9 +192,8 @@ const preview_curve = () => {
     const curve = build_target_curve(ranges, rampSeconds);
     set_round_chart(ranges);
 
-    chart.data.datasets[0].data = curve.times.map((t, i) => ({ x: t, y: curve.temps[i] }));
-    chart.data.datasets[0].pointBorderColor.length = 0;
-    chart.data.datasets[0].pointBackgroundColor.length = 0;
+    const points = curve.times.map((t, i) => ({ x: t, y: curve.temps[i] }));
+    set_target_curve(points);
     chart.update();
 };
 
