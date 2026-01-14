@@ -312,33 +312,37 @@ namespace TemperatureWarriorCode
 
         private void BuildTargetCurve(TemperatureRange[] ranges, int rampSeconds, out List<double> curveTimes, out List<double> curveTemps)
         {
-            curveTimes = new List<double>();
-            curveTemps = new List<double>();
+            var times = new List<double>();
+            var temps = new List<double>();
             if (ranges == null || ranges.Length == 0)
+            {
+                curveTimes = times;
+                curveTemps = temps;
                 return;
+            }
 
             double rampSec = Math.Max(0, rampSeconds);
             double elapsed = 0.0;
 
             void AppendPoint(double time, double temp)
             {
-                if (curveTimes.Count == 0)
+                if (times.Count == 0)
                 {
-                    curveTimes.Add(time);
-                    curveTemps.Add(temp);
+                    times.Add(time);
+                    temps.Add(temp);
                     return;
                 }
 
-                double lastTime = curveTimes[curveTimes.Count - 1];
+                double lastTime = times[times.Count - 1];
                 if (time <= lastTime + 0.000001)
                 {
-                    curveTimes[curveTimes.Count - 1] = time;
-                    curveTemps[curveTemps.Count - 1] = temp;
+                    times[times.Count - 1] = time;
+                    temps[temps.Count - 1] = temp;
                     return;
                 }
 
-                curveTimes.Add(time);
-                curveTemps.Add(temp);
+                times.Add(time);
+                temps.Add(temp);
             }
 
             AppendPoint(0.0, GetRangeSetpoint(ranges[0]));
@@ -369,6 +373,9 @@ namespace TemperatureWarriorCode
                     AppendPoint(elapsed, currentTarget);
                 }
             }
+
+            curveTimes = times;
+            curveTemps = temps;
         }
 
         private void RegisterTimeControllerTemperature(TimeController timeController)
@@ -446,7 +453,7 @@ namespace TemperatureWarriorCode
             //// Notificaciones al cliente
             Timer notificationTimer = new(async _ => await NotifyClient(webServer, connection), null, 0, notificationPeriodInMilliseconds);
 
-            for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Count; rangeIndex++)
+            for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Length; rangeIndex++)
             { // modificar límites en cada iteración
                 var range = cmd.temperatureRanges[rangeIndex];
                 currentSetpoint = GetRangeSetpoint(range);
