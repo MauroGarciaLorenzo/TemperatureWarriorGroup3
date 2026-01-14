@@ -30,8 +30,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan updateHtmlTime = TimeSpan.FromSeconds(1);
-        TimeSpan sensorSampleTime = TimeSpan.FromSeconds(0.1);
+        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(50);
         Temperature currentTemperature;
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
@@ -69,7 +68,8 @@ namespace TemperatureWarriorCode
 
         // Buffer de actualizaciones a enviar en la próxima notifiación al cliente
         RingBuffer<double> nextNotificationsBuffer = new(10);
-        readonly long notificationPeriodInMilliseconds = 2000;
+        readonly long notificationPeriodInMilliseconds = 800;
+        readonly int anticipationSeconds = 2;
 
         // El modo de ejecución del sistema
         enum OpMode
@@ -121,7 +121,8 @@ namespace TemperatureWarriorCode
             );
 
             sensor.Updated += TemperatureUpdateHandler;
-            sensor.StartUpdating(updateHtmlTime);
+            // Muestreo rápido del sensor; las notificaciones al cliente siguen con su propia cadencia.
+            sensor.StartUpdating(sensorSampleTime);
         }
 
         private async Task LaunchNetworkAndWebserver()
@@ -379,21 +380,43 @@ namespace TemperatureWarriorCode
             //// Notificaciones al cliente
             Timer notificationTimer = new(async _ => await NotifyClient(webServer, connection), null, 0, notificationPeriodInMilliseconds);
 
-            foreach (var range in cmd.temperatureRanges)
+            int anticipationMs = Math.Max(0, anticipationSeconds * 1000);
+            for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Count; rangeIndex++)
             { // modificar setpoint en cada iteración
+                var range = cmd.temperatureRanges[rangeIndex];
                 currentSetpoint = getRangeSetpoint(range);
                 currentRange = range;
                 temperatureController.SetSetpoint(currentSetpoint);
                 temperatureController.setBounds(lowerBound: range.MinTemp, upperBound: range.MaxTemp);
                 Resolver.Log.Info($"Iniciando rango [{range.MinTemp} - {range.MaxTemp}]");
+
+                var hasNextRange = rangeIndex + 1 < cmd.temperatureRanges.Count;
+                var preDelayMs = range.RangeTimeInMilliseconds;
+                if (hasNextRange && anticipationMs > 0)
+                    preDelayMs = Math.Max(0, range.RangeTimeInMilliseconds - anticipationMs);
+
                 try
                 {
-                    await Task.Delay(range.RangeTimeInMilliseconds, shutdownCancellationToken);
+                    await Task.Delay(preDelayMs, shutdownCancellationToken);
                 }
                 catch (TaskCanceledException)
                 {
                     // En caso de cancelación por temperature alta, escapar de loop (notificación a cliente se maneja abajo)
                     break;
+                }
+
+                if (hasNextRange && anticipationMs > 0)
+                {
+                    var nextRange = cmd.temperatureRanges[rangeIndex + 1];
+                    temperatureController.SetSetpoint(getRangeSetpoint(nextRange));
+                    try
+                    {
+                        await Task.Delay(anticipationMs, shutdownCancellationToken);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        break;
+                    }
                 }
             }
 
