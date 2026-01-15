@@ -40,7 +40,7 @@ namespace TemperatureWarriorCode
         bool temperatureHandlerRunning = false; // Evitar overlapping de handlers
 
         // Control por time-proportioning (para relés ON/OFF) usando la salida continua del PID.
-        readonly int controlWindowInMilliseconds = 1000;
+        readonly int controlWindowInMilliseconds = 200;
         long controlWindowStartMs = 0;
         TemperatureController.ActuatorAction lastActuatorAction = TemperatureController.ActuatorAction.Off;
 
