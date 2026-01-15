@@ -35,6 +35,16 @@ namespace TemperatureWarriorCode
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
         int numberOfPoints = 0;
+
+        // Filtro de temperatura para el PID (anti-ruido/outliers)
+        // - Mediana de una ventana pequeña para eliminar picos
+        // - Limitador de velocidad para impedir saltos imposibles entre muestras
+        readonly int controlMedianWindowSize = 7;
+        readonly double outlierDistanceFromMedianCelsius = 3.0;
+        readonly double maxFilteredRateCelsiusPerSecond = 5.0;
+        readonly Queue<double> recentRawTemperatureCelsius = new Queue<double>();
+        double? lastFilteredTemperatureCelsius = null;
+        long lastFilteredTemperatureMillis = 0;
         
 
         TemperatureController temperatureController;
@@ -69,7 +79,7 @@ namespace TemperatureWarriorCode
         // Buffer de actualizaciones a enviar en la próxima notificación al cliente
         RingBuffer<double> nextNotificationsBuffer = new(10);
         readonly long notificationPeriodInMilliseconds = 800;
-        readonly int anticipationSeconds = 0;
+        readonly int anticipationSeconds = 5;
 
         // El modo de ejecución del sistema
         enum OpMode
@@ -181,17 +191,61 @@ namespace TemperatureWarriorCode
 
         private void TemperatureUpdateHandler(object sender, IChangeResult<Temperature> e)
         {
-            currentTemperature = e.New;
-            temperatureHistory.Add(currentTemperature.Celsius);
-            numberOfPoints += 1;
-            timeHistory.Add(numberOfPoints * (double) sensorSampleTime.TotalSeconds);
+            var nowMillis = TimeUtils.millis();
+            var candidateC = e.New.Celsius;
+
+            static double Clamp(double value, double min, double max)
+            {
+                if (value < min) return min;
+                if (value > max) return max;
+                return value;
+            }
+
+            if (double.IsNaN(candidateC) || double.IsInfinity(candidateC))
+                return;
+
+            // Mantener el comportamiento previo para lecturas inválidas negativas (modo demo/test)
+            if (candidateC < 0)
+            {
+                Random rnd = new Random();
+                candidateC = rnd.Next(minValue: 20, maxValue: 21);
+            }
+
+            // Actualizar ventana de muestras crudas
+            recentRawTemperatureCelsius.Enqueue(candidateC);
+            while (recentRawTemperatureCelsius.Count > controlMedianWindowSize)
+                recentRawTemperatureCelsius.Dequeue();
+
+            // Mediana (robusta ante outliers)
+            var window = recentRawTemperatureCelsius.ToArray();
+            Array.Sort(window);
+            var medianC = window[window.Length / 2];
+
+            // Si esta muestra está muy lejos de la mediana, usar la mediana para el PID
+            var filteredC = (Math.Abs(candidateC - medianC) > outlierDistanceFromMedianCelsius)
+                ? medianC
+                : candidateC;
+
+            // Limitador de velocidad de cambio para evitar saltos imposibles entre muestras
+            if (lastFilteredTemperatureCelsius.HasValue)
+            {
+                var dtSeconds = Math.Max(0.001, (nowMillis - lastFilteredTemperatureMillis) / 1000.0);
+                var maxDelta = maxFilteredRateCelsiusPerSecond * dtSeconds;
+                filteredC = Clamp(filteredC,
+                    lastFilteredTemperatureCelsius.Value - maxDelta,
+                    lastFilteredTemperatureCelsius.Value + maxDelta);
+            }
+
+            lastFilteredTemperatureCelsius = filteredC;
+            lastFilteredTemperatureMillis = nowMillis;
+
+            // Usar siempre la temperatura filtrada para control + registro
+            currentTemperature = new Temperature(filteredC);
+            temperatureHistory.Add(filteredC);
+            timeHistory.Add(nowMillis / 1000.0);
+
             Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
 
-            if (currentTemperature.Celsius < 0) {
-                Random rnd = new Random();
-                currentTemperature = new Temperature(rnd.Next(minValue: 20, maxValue: 21));
-            }
-            
             TemperatureControllerHandler();
         }
 
@@ -355,11 +409,37 @@ namespace TemperatureWarriorCode
 
             double getRangeSetpoint(TemperatureRange range) => range.MinTemp + (range.MaxTemp - range.MinTemp) * 0.5;
 
+            int anticipationMs = Math.Max(0, anticipationSeconds * 1000);
+
+            int GetRangeIndexAtTime(TemperatureRange[] ranges, int timeMs)
+            {
+                if (ranges is null || ranges.Length == 0)
+                    return 0;
+                if (timeMs <= 0)
+                    return 0;
+
+                var remaining = timeMs;
+                for (int i = 0; i < ranges.Length; i++)
+                {
+                    var duration = ranges[i].RangeTimeInMilliseconds;
+                    if (remaining < duration)
+                        return i;
+                    remaining -= duration;
+                }
+
+                return ranges.Length - 1;
+            }
+
             if (!cmd.isTest)
             {
-                TemperatureRange tempRange = cmd.temperatureRanges.First();
-                temperatureController.SetSetpoint(getRangeSetpoint(tempRange));
-                temperatureController.setBounds(lowerBound: tempRange.MinTemp, upperBound: tempRange.MaxTemp);
+                TemperatureRange firstRange = cmd.temperatureRanges.First();
+                var anticipatedRangeIndexAtStart = GetRangeIndexAtTime(cmd.temperatureRanges, anticipationMs);
+                TemperatureRange anticipatedRangeAtStart = cmd.temperatureRanges[anticipatedRangeIndexAtStart];
+
+                // Bounds siguen el rango "actual" (por tiempo real). El setpoint se adelanta.
+                currentSetpoint = getRangeSetpoint(anticipatedRangeAtStart);
+                temperatureController.SetSetpoint(currentSetpoint);
+                temperatureController.setBounds(lowerBound: firstRange.MinTemp, upperBound: firstRange.MaxTemp);
                 temperatureController.Start();
             }
 
@@ -380,43 +460,77 @@ namespace TemperatureWarriorCode
             //// Notificaciones al cliente
             Timer notificationTimer = new(async _ => await NotifyClient(webServer, connection), null, 0, notificationPeriodInMilliseconds);
 
-            int anticipationMs = Math.Max(0, anticipationSeconds * 1000);
-            for (int rangeIndex = 0; rangeIndex < cmd.temperatureRanges.Count(); rangeIndex++)
-            { // modificar setpoint en cada iteración
-                var range = cmd.temperatureRanges[rangeIndex];
-                currentSetpoint = getRangeSetpoint(range);
+            // Planificación de rangos:
+            // - Los bounds (setBounds) cambian en el inicio real del rango.
+            // - El setpoint (SetSetpoint) se adelanta: usa el rango que estará activo en (t + anticipation).
+            var ranges = cmd.temperatureRanges;
+            var rangeStartMs = new int[ranges.Length];
+            var accMs = 0;
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                rangeStartMs[i] = accMs;
+                accMs += ranges[i].RangeTimeInMilliseconds;
+            }
+
+            var setpointRangeIndex = GetRangeIndexAtTime(ranges, anticipationMs);
+            var nextSetpointBoundaryIndex = Math.Min(ranges.Length, setpointRangeIndex + 1);
+            var elapsedMs = 0;
+
+            // Asegurar setpoint inicial también durante tests (no activa relés porque Start() no se llama)
+            currentSetpoint = getRangeSetpoint(ranges[setpointRangeIndex]);
+            temperatureController.SetSetpoint(currentSetpoint);
+
+            for (int rangeIndex = 0; rangeIndex < ranges.Length; rangeIndex++)
+            {
+                var range = ranges[rangeIndex];
                 currentRange = range;
-                temperatureController.SetSetpoint(currentSetpoint);
                 temperatureController.setBounds(lowerBound: range.MinTemp, upperBound: range.MaxTemp);
                 Resolver.Log.Info($"Iniciando rango [{range.MinTemp} - {range.MaxTemp}]");
 
-                var hasNextRange = rangeIndex + 1 < cmd.temperatureRanges.Count();
-                var preDelayMs = range.RangeTimeInMilliseconds;
-                if (hasNextRange && anticipationMs > 0)
-                    preDelayMs = Math.Max(0, range.RangeTimeInMilliseconds - anticipationMs);
+                var rangeEndMs = rangeStartMs[rangeIndex] + range.RangeTimeInMilliseconds;
 
-                try
+                // Aplicar todos los cambios de setpoint cuya "hora adelantada" cae dentro de este rango real.
+                while (nextSetpointBoundaryIndex < ranges.Length)
                 {
-                    await Task.Delay(preDelayMs, shutdownCancellationToken);
+                    var switchTimeMs = rangeStartMs[nextSetpointBoundaryIndex] - anticipationMs;
+                    if (switchTimeMs >= rangeEndMs)
+                        break;
+
+                    var delayMs = switchTimeMs - elapsedMs;
+                    if (delayMs > 0)
+                    {
+                        try
+                        {
+                            await Task.Delay(delayMs, shutdownCancellationToken);
+                        }
+                        catch (TaskCanceledException)
+                        {
+                            break;
+                        }
+                        elapsedMs = switchTimeMs;
+                    }
+
+                    // En este instante, (t + anticipation) cruza al siguiente rango: actualizar setpoint.
+                    currentSetpoint = getRangeSetpoint(ranges[nextSetpointBoundaryIndex]);
+                    temperatureController.SetSetpoint(currentSetpoint);
+                    nextSetpointBoundaryIndex++;
                 }
-                catch (TaskCanceledException)
-                {
-                    // En caso de cancelación por temperature alta, escapar de loop (notificación a cliente se maneja abajo)
+
+                if (shutdownCancellationToken.IsCancellationRequested)
                     break;
-                }
 
-                if (hasNextRange && anticipationMs > 0)
+                var remainingMs = rangeEndMs - elapsedMs;
+                if (remainingMs > 0)
                 {
-                    var nextRange = cmd.temperatureRanges[rangeIndex + 1];
-                    temperatureController.SetSetpoint(getRangeSetpoint(nextRange));
                     try
                     {
-                        await Task.Delay(anticipationMs, shutdownCancellationToken);
+                        await Task.Delay(remainingMs, shutdownCancellationToken);
                     }
                     catch (TaskCanceledException)
                     {
                         break;
                     }
+                    elapsedMs = rangeEndMs;
                 }
             }
 
