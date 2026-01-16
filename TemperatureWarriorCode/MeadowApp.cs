@@ -302,6 +302,7 @@ namespace TemperatureWarriorCode
 
             int action = temperatureController.Update(controlTemperatureCelsius, temperatureHistory, timeHistory);
             lastControlTemperatureCelsius = controlTemperatureCelsius;
+            
             if (action == 1)
             {
                 heat();
@@ -347,6 +348,16 @@ namespace TemperatureWarriorCode
                         Resolver.Log.Info("[MeadowApp] Comando guardado");
                         currentCommand = message.data.Value.ToCommand();
                         currentMode = OpMode.Prep;
+                        if (!currentCommand.Value.isTest && currentCommand.Value.temperatureRanges.Any())
+                        {
+                            var firstRange = currentCommand.Value.temperatureRanges.First();
+                            currentSetpoint = firstRange.MinTemp + (firstRange.MaxTemp - firstRange.MinTemp) * 0.5;
+                            currentRange = firstRange;
+                            temperatureController.SetSetpoint(currentSetpoint);
+                            temperatureController.setBounds(lowerBound: firstRange.MinTemp, upperBound: firstRange.MaxTemp);
+                            temperatureController.Start();
+                            Resolver.Log.Info($"[MeadowApp] Precalentando rango inicial [{firstRange.MinTemp} - {firstRange.MaxTemp}]");
+                        }
                         await webServer.SendMessage(connection, "{\"type\": \"ConfigOK\"}");
                         break;
                     }
