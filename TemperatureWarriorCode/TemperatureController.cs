@@ -125,7 +125,7 @@ namespace TemperatureWarriorCode
             double output = p + i + d;
             output = Clamp(output, outputLowerbound, outputUpperbound);
 
-            double deadband = 10.0;
+            double deadband = 2.0;
             if (output > deadband)
                 action = 1;
             else if (output < -deadband)
@@ -135,8 +135,7 @@ namespace TemperatureWarriorCode
             // Permitimos negativos para control simétrico (calentar/enfriar)
             output = Clamp(output, -outputUpperbound, outputUpperbound);
 
-            // Deadband fijo para evitar rebotar alrededor del setpoint
-            deadband = 10.0;
+            
 
             // Lógica de relés: positivo = calentar, negativo = enfriar
             return action;

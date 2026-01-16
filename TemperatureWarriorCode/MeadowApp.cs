@@ -30,7 +30,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(1);
+        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(100);
         Temperature currentTemperature;
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
