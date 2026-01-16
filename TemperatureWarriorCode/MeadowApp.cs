@@ -265,7 +265,7 @@ namespace TemperatureWarriorCode
             temperatureHistory.Add(displayTemperatureCelsius);
             timeHistory.Add(nowMillis / 1000.0);
 
-            Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
+            // Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
 
             TemperatureControllerHandler();
         }
