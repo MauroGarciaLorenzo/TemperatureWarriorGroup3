@@ -31,7 +31,7 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(50);
+        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(100);
         Temperature currentTemperature;
         double displayTemperatureCelsius = double.NaN;
         double controlTemperatureCelsius = double.NaN;
@@ -41,7 +41,7 @@ namespace TemperatureWarriorCode
         List<double> timeHistory = new List<double>();
         int numberOfPoints = 0;
 
-        readonly int actuatorBlankingMs = 600;
+        readonly int actuatorBlankingMs = 1000;
         readonly int minSamplesBeforeControl = 15;
 
         // Filtro de temperatura para el PID (anti-ruido/outliers)
