@@ -22,6 +22,7 @@ using NETDuinoWar;
 using RingBuffer;
 using System.Collections.Generic;
 
+
 namespace TemperatureWarriorCode
 {
 
@@ -30,11 +31,18 @@ namespace TemperatureWarriorCode
 
         // Sensor de temperatura
         AnalogTemperature sensor;
-        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(1);
+        TimeSpan sensorSampleTime = TimeSpan.FromMilliseconds(50);
         Temperature currentTemperature;
+        double displayTemperatureCelsius = double.NaN;
+        double controlTemperatureCelsius = double.NaN;
+        double lastControlTemperatureCelsius = double.NaN;
+        long lastActuatorChangeMs = 0;
         List<double> temperatureHistory = new List<double>();
         List<double> timeHistory = new List<double>();
         int numberOfPoints = 0;
+
+        readonly int actuatorBlankingMs = 600;
+        readonly int minSamplesBeforeControl = 15;
 
         // Filtro de temperatura para el PID (anti-ruido/outliers)
         // - Mediana de una ventana pequeña para eliminar picos
@@ -191,7 +199,16 @@ namespace TemperatureWarriorCode
 
         private void TemperatureUpdateHandler(object sender, IChangeResult<Temperature> e)
         {
+
             var nowMillis = TimeUtils.millis();
+
+            // BLOQUEO tras cambio de actuador
+            if (nowMillis - lastActuatorChangeMs < actuatorBlankingMs)
+            {
+                // Actualiza solo display si quieres, pero NO control ni histórico
+                displayTemperatureCelsius = lastFilteredTemperatureCelsius ?? e.New.Celsius;
+                return;
+            }
             var candidateC = e.New.Celsius;
 
             static double Clamp(double value, double min, double max)
@@ -239,9 +256,13 @@ namespace TemperatureWarriorCode
             lastFilteredTemperatureCelsius = filteredC;
             lastFilteredTemperatureMillis = nowMillis;
 
-            // Usar siempre la temperatura filtrada para control + registro
-            currentTemperature = new Temperature(filteredC);
-            temperatureHistory.Add(filteredC);
+            displayTemperatureCelsius = filteredC;
+            if (double.IsNaN(lastControlTemperatureCelsius))
+                lastControlTemperatureCelsius = displayTemperatureCelsius;
+
+            // Mantener la temperatura visible como la filtrada
+            currentTemperature = new Temperature(displayTemperatureCelsius);
+            temperatureHistory.Add(displayTemperatureCelsius);
             timeHistory.Add(nowMillis / 1000.0);
 
             Resolver.Log.Info($"[MeadowApp] DEBUG (Remove this console line): Current temperature={currentTemperature.Celsius}");
@@ -251,17 +272,26 @@ namespace TemperatureWarriorCode
 
         private void TemperatureControllerHandler()
         {
+            if (temperatureHistory.Count < minSamplesBeforeControl)
+                return;
             if (temperatureHandlerRunning)
                 return;
             temperatureHandlerRunning = true; 
 
             var currTemp = currentTemperature;
+            var nowMs = TimeUtils.millis();
 
             // TODO Gestionar controlador de temperatura si estamos en modo combate
             // Solo controlar en modo combate y si no es test
             // if (currentMode == OpMode.Combat && currentCommand is { isTest: false })
             // {
-            int action = temperatureController.Update(currTemp.Celsius, temperatureHistory, timeHistory);
+            if (!double.IsNaN(lastControlTemperatureCelsius) && nowMs - lastActuatorChangeMs < 400)
+                controlTemperatureCelsius = lastControlTemperatureCelsius;
+            else
+                controlTemperatureCelsius = displayTemperatureCelsius;
+
+            int action = temperatureController.Update(controlTemperatureCelsius, temperatureHistory, timeHistory);
+            lastControlTemperatureCelsius = controlTemperatureCelsius;
             if (action == 1)
             {
                 heat();
@@ -364,7 +394,9 @@ namespace TemperatureWarriorCode
 
         private void RegisterTimeControllerTemperature(TimeController timeController)
         {
-            var currTemp = currentTemperature.Celsius;
+            var currTemp = double.IsNaN(displayTemperatureCelsius)
+                ? currentTemperature.Celsius
+                : displayTemperatureCelsius;
             timeController.RegisterTemperature(currTemp);
             try
             {
@@ -595,25 +627,40 @@ namespace TemperatureWarriorCode
             return;
         }
 
-        public void cool()
-        {
-            coolingRelayPort.State = true;
-            heatingRelayPort.State = false;
-        }
-
         public void heat()
         {
+            var changed = heatingRelayPort.State != true || coolingRelayPort.State != false;
+
             heatingRelayPort.State = true;
             coolingRelayPort.State = false;
+
+            if (changed)
+                lastActuatorChangeMs = TimeUtils.millis();
+        }
+
+        public void cool()
+        {
+            var changed = coolingRelayPort.State != true || heatingRelayPort.State != false;
+
+            coolingRelayPort.State = true;
+            heatingRelayPort.State = false;
+
+            if (changed)
+                lastActuatorChangeMs = TimeUtils.millis();
         }
 
         public void shutdown()
         {
+            var changed = heatingRelayPort.State != true || coolingRelayPort.State != true;
+
             heatingRelayPort.State = true;
             coolingRelayPort.State = true;
-        }
-    }
 
+            if (changed)
+                lastActuatorChangeMs = TimeUtils.millis();
+        }
+            
+    }
 
 
     // Serialización de ringbuffer de notificaciones

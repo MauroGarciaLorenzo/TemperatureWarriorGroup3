@@ -20,6 +20,15 @@ namespace TemperatureWarriorCode
     class TemperatureController
     {
 
+        enum ControlState
+        {
+            Off,
+            Heating,
+            Cooling
+        }
+
+        ControlState state = ControlState.Off;
+
 
         bool isWorking = false;
         double outputUpperbound;
@@ -31,9 +40,9 @@ namespace TemperatureWarriorCode
 
         // Estado PID para control ON/OFF con inercia
         // Kp: Reacción, Ki: Corrección mínima, Kd: Freno fuerte
-        double kp = 25.0;
-        double ki = 0.1;
-        double kd = 60.0;
+        double kp = 18.0;
+        double ki = 0.05;
+        double kd = 50.0;
 
         double integral = 0.0;
         double lastError = 0.0;
@@ -88,59 +97,63 @@ namespace TemperatureWarriorCode
 
         // Llamada desde MeadowApp con la temperatura actual
         public int Update(double currentTemperatureCelsius, List<double> temperatureHistory, List<double> timeHistory)
-        {
-            int action = 0; // 0: no hacer nada, 1: calentar, 2: enfriar
-            if (!isWorking) return 0;
+{
+    if (!isWorking) return 0;
 
-            double currentTime = timeHistory.Count > 0 ? timeHistory[timeHistory.Count - 1] : lastTimeSeconds;
-            double dt = sampleTimeInMilliseconds / 1000.0;
-            if (timeHistory.Count > 1)
-            {
-                double dtCandidate = timeHistory[timeHistory.Count - 1] - timeHistory[timeHistory.Count - 2];
-                if (dtCandidate > 0.0)
-                    dt = dtCandidate;
-            }
+    double dt = sampleTimeInMilliseconds / 1000.0;
+    if (timeHistory.Count > 1)
+    {
+        double dtCandidate = timeHistory[^1] - timeHistory[^2];
+        if (dtCandidate > 0.0)
+            dt = dtCandidate;
+    }
 
-            // PID discreto muy simple
-            double error = setpoint - currentTemperatureCelsius;
+    // ===== PID =====
+    double error = setpoint - currentTemperatureCelsius;
 
-            // Bypasseamos el control Bang-Bang para que el PID controle la aproximación suavemente
-            /*
-            if (currentTemperatureCelsius < lowerBound) ...
-            */
+    integral += error * dt;
+    double integralLimit = ki > 0.0 ? Math.Abs(outputUpperbound / ki) : 0.0;
+    if (integralLimit > 0.0)
+        integral = Clamp(integral, -integralLimit, integralLimit);
 
-            integral += error * dt;
-            double integralLimit = ki > 0.0 ? Math.Abs(outputUpperbound / ki) : 0.0;
-            if (integralLimit > 0.0)
-            {
-                integral = Clamp(integral, -integralLimit, integralLimit);
-            }
+    double derivative = (error - lastError) / dt;
 
-            double derivative = (error - lastError) / dt;
+    double output = kp * error + ki * integral + kd * derivative;
+    output = Clamp(output, outputLowerbound, outputUpperbound);
 
-            double p = kp * error;
-            double i = ki * integral;
-            double d = kd * derivative;
+    lastError = error;
 
-            double output = p + i + d;
-            output = Clamp(output, outputLowerbound, outputUpperbound);
+    // ===== CONTROL CON HISTÉRESIS REAL =====
+    double enterBand = 1.2;   // °C
+    double exitBand  = 0.4;   // °C
 
-            double deadband = 10.0;
-            if (output > deadband)
-                action = 1;
-            else if (output < -deadband)
-                action = 2;
-            else
-                action = 0;
-            // Permitimos negativos para control simétrico (calentar/enfriar)
-            output = Clamp(output, -outputUpperbound, outputUpperbound);
+    switch (state)
+    {
+        case ControlState.Off:
+            if (error > enterBand)
+                state = ControlState.Heating;
+            else if (error < -enterBand)
+                state = ControlState.Cooling;
+            break;
 
-            // Deadband fijo para evitar rebotar alrededor del setpoint
-            deadband = 10.0;
+        case ControlState.Heating:
+            if (error < exitBand)
+                state = ControlState.Off;
+            break;
 
-            // Lógica de relés: positivo = calentar, negativo = enfriar
-            return action;
-        }
+        case ControlState.Cooling:
+            if (error > -exitBand)
+                state = ControlState.Off;
+            break;
+    }
+
+    return state switch
+    {
+        ControlState.Heating => 1,
+        ControlState.Cooling => 2,
+        _ => 0
+    };
+}
 
         double Clamp(double value, double min, double max)
         {
