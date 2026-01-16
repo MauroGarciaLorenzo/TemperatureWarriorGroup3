@@ -281,6 +281,16 @@ namespace TemperatureWarriorCode
             var currTemp = currentTemperature;
             var nowMs = TimeUtils.millis();
 
+            // Parada total si supera 50ºC (equivalente a botón shutdown)
+            if (currTemp.Celsius > 50)
+            {
+                Resolver.Log.Info($"[MeadowApp] ALERTA: Temperatura supera 50ºC: {currTemp.Celsius}ºC");
+                shutdown();
+                Shutdown(CancellationReason.ShutdownCommand);
+                temperatureHandlerRunning = false;
+                return;
+            }
+
             // TODO Gestionar controlador de temperatura si estamos en modo combate
             // Solo controlar en modo combate y si no es test
             // if (currentMode == OpMode.Combat && currentCommand is { isTest: false })
